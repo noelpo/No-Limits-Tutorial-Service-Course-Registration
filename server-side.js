@@ -1,98 +1,121 @@
+require("dotenv").config(); // Load environment variables from .env file
+
 const express = require("express");
-const bodyParser = require("body-parser");
 const mysql = require("mysql2");
-require("dotenv").config(); // Load environment variables
+const bodyParser = require("body-parser");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000; // Use environment variable or default to 3000
 
-// Middleware
+// Middleware to parse JSON requests
 app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
-
-// Serve static files
 app.use(express.static("public"));
 
-// Database connection
+// MySQL Database connection
 const db = mysql.createConnection({
-    host: process.env.DB_HOST || "localhost", // Use environment variable or fallback to localhost
-    user: process.env.DB_USER || "root", // Use environment variable or fallback to 'root'
-    password: process.env.DB_PASSWORD || "vgairlvnoa?!$", // Use environment variable or fallback to an empty password
-    database: process.env.DB_NAME || "course_registrationn", // Use environment variable or fallback to default DB name
+    host: process.env.DB_HOST || "localhost", // Use default localhost if DB_HOST is not set
+    user: process.env.DB_USER || "root",      // Default user is 'root'
+    password: process.env.DB_PASSWORD || "",  // Default password is empty
+    database: process.env.DB_NAME || "",      // Default to an empty database name
+    port: process.env.DB_PORT || 3306         // Use default MySQL port 3306
 });
 
+// Connect to the database
 db.connect((err) => {
     if (err) {
-        console.error("Database connection failed:", err.message);
+        console.error("Error connecting to the database:", err.message);
         return;
     }
-    console.log("Connected to the database!");
-});
-
-// Endpoints
-
-// Sign up endpoint
-app.post("/signup", (req, res) => {
-    const { username, email, password } = req.body;
-    const query = "INSERT INTO users (username, email, password) VALUES (?, ?, ?)";
-    db.query(query, [username, email, password], (err, result) => {
-        if (err) {
-            console.error("Error inserting user:", err.message);
-            return res.status(500).json({ message: "Database error" });
-        }
-        res.json({ message: "User signed up successfully!" });
-    });
+    console.log("Connected to MySQL database!");
 });
 
 // Login endpoint
 app.post("/login", (req, res) => {
     const { username, password } = req.body;
-    const query = "SELECT * FROM users WHERE username = ? AND password = ?";
+
+    const query = "SELECT * FROM students WHERE username = ? AND password = ?";
     db.query(query, [username, password], (err, results) => {
         if (err) {
-            console.error("Error fetching user:", err.message);
-            return res.status(500).json({ message: "Database error" });
+            console.error("Database error:", err.message);
+            res.status(500).json({ success: false, message: "Database error." });
+            return;
         }
+
         if (results.length > 0) {
-            res.json({ message: "Login successful!", user: results[0] });
+            res.json({ success: true, message: "Login successful!", studentId: results[0].id });
         } else {
-            res.status(401).json({ message: "Invalid username or password" });
+            res.json({ success: false, message: "Invalid username or password." });
         }
     });
 });
 
-// Register for a course
-app.post("/register", (req, res) => {
-    const { student_id, course_id, time_slot } = req.body;
-    const query = "INSERT INTO registrations (student_id, course_id, time_slot) VALUES (?, ?, ?)";
-    db.query(query, [student_id, course_id, time_slot], (err, result) => {
+// Sign-up endpoint
+app.post("/signup", (req, res) => {
+    const { username, password } = req.body;
+
+    const query = "INSERT INTO students (username, password) VALUES (?, ?)";
+    db.query(query, [username, password], (err, results) => {
         if (err) {
-            console.error("Error registering for course:", err.message);
-            return res.status(500).json({ message: "Database error" });
+            console.error("Database error:", err.message);
+            res.status(500).json({ success: false, message: "Username already exists or other error." });
+            return;
         }
-        res.json({ message: "Course registered successfully!" });
+
+        res.json({ success: true, message: "Sign-up successful! You can now log in." });
+    });
+});
+
+// Registration endpoint
+app.post("/register", (req, res) => {
+    const { studentId, courseId, timeSlot } = req.body;
+
+    const checkQuery = "SELECT * FROM registrations WHERE course_id = ? AND time_slot = ?";
+    db.query(checkQuery, [courseId, timeSlot], (err, results) => {
+        if (err) {
+            console.error("Database error:", err.message);
+            res.status(500).json({ success: false, message: "Database error." });
+            return;
+        }
+
+        if (results.length > 0) {
+            res.json({ success: false, message: "Time slot is already taken for this course." });
+        } else {
+            const insertQuery = "INSERT INTO registrations (student_id, course_id, time_slot) VALUES (?, ?, ?)";
+            db.query(insertQuery, [studentId, courseId, timeSlot], (err, results) => {
+                if (err) {
+                    console.error("Database error:", err.message);
+                    res.status(500).json({ success: false, message: "Database error." });
+                    return;
+                }
+
+                res.json({ success: true, message: "Registration successful!" });
+            });
+        }
     });
 });
 
 // Fetch registered courses for a student
-app.get("/courses/:student_id", (req, res) => {
-    const student_id = req.params.student_id;
+app.get("/registered-courses/:studentId", (req, res) => {
+    const studentId = req.params.studentId;
+
     const query = `
-        SELECT courses.name AS course_name, registrations.time_slot
+        SELECT registrations.course_id, courses.course_name, registrations.time_slot
         FROM registrations
-        INNER JOIN courses ON registrations.course_id = courses.id
-        WHERE registrations.student_id = ?
-    `;
-    db.query(query, [student_id], (err, results) => {
+        JOIN courses ON registrations.course_id = courses.id
+        WHERE registrations.student_id = ?`;
+
+    db.query(query, [studentId], (err, results) => {
         if (err) {
-            console.error("Error fetching courses:", err.message);
-            return res.status(500).json({ message: "Database error" });
+            console.error("Database error:", err.message);
+            res.status(500).json({ success: false, message: "Database error." });
+            return;
         }
-        res.json({ courses: results });
+
+        res.json({ success: true, courses: results });
     });
 });
 
 // Start the server
 app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`Server is running on http://localhost:${PORT}`);
 });
